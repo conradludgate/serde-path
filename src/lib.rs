@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use serde::de;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Field<'a> {
     Index(usize),
     Key(&'a str),
@@ -29,15 +29,25 @@ where
     where
         D: de::Deserializer<'de>,
     {
-        match self.path {
-            [] => self.seed.deserialize(deserializer),
-            [Field::Key(_), ..] => deserializer.deserialize_map(PathVisitor(self)),
-            [Field::Index(_), ..] => deserializer.deserialize_seq(PathVisitor(self)),
+        let Self { path, seed } = self;
+        match path {
+            [] => seed.deserialize(deserializer),
+            &[head, ref path @ ..] => {
+                let next = Self { path, seed };
+                let visitor = PathVisitor { head, next };
+                match visitor.head {
+                    Field::Index(_) => deserializer.deserialize_seq(visitor),
+                    Field::Key(_) => deserializer.deserialize_map(visitor),
+                }
+            }
         }
     }
 }
 
-struct PathVisitor<'a, T>(Path<'a, T>);
+struct PathVisitor<'a, T> {
+    head: Field<'a>,
+    next: Path<'a, T>,
+}
 
 impl<'de, S> de::Visitor<'de> for PathVisitor<'_, S>
 where
@@ -45,23 +55,22 @@ where
 {
     type Value = S::Value;
     fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "path {:?}", self.0.path)
+        match self.head {
+            Field::Index(i) => write!(f, "a sequence containing element {i:?}"),
+            Field::Key(k) => write!(f, "a map containing element {k:?}"),
+        }
     }
 
     #[inline]
     fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-        let [Field::Index(head), tail @ ..] = self.0.path else {
-            panic!("path should always have an index value")
-        };
-        let seed = Path {
-            path: tail,
-            seed: self.0.seed,
+        let Field::Index(head) = self.head else {
+            return Err(de::Error::invalid_type(de::Unexpected::Seq, &self));
         };
 
         let mut i = 0;
         let value = loop {
-            if i == *head {
-                break seq.next_element_seed(seed)?;
+            if i == head {
+                break seq.next_element_seed(self.next)?;
             }
 
             if seq.next_element::<de::IgnoredAny>()?.is_none() {
@@ -79,14 +88,10 @@ where
 
     #[inline]
     fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        let [Field::Key(head), tail @ ..] = self.0.path else {
-            panic!("path should always have a key value")
+        let Field::Key(head) = self.head else {
+            return Err(de::Error::invalid_type(de::Unexpected::Map, &self));
         };
         let visitor = FieldVisitor(head);
-        let seed = Path {
-            path: tail,
-            seed: self.0.seed,
-        };
 
         let value = loop {
             let Some(found) = map.next_key_seed(visitor)? else {
@@ -94,7 +99,7 @@ where
             };
 
             if found {
-                break Some(map.next_value_seed(seed)?);
+                break Some(map.next_value_seed(self.next)?);
             }
 
             map.next_value::<de::IgnoredAny>()?;
