@@ -34,43 +34,36 @@ where
             [] => seed.deserialize(deserializer),
             &[head, ref path @ ..] => {
                 let next = Self { path, seed };
-                let visitor = PathVisitor { head, next };
-                match visitor.head {
-                    Field::Index(_) => deserializer.deserialize_seq(visitor),
-                    Field::Key(_) => deserializer.deserialize_map(visitor),
+                match head {
+                    Field::Index(head) => deserializer.deserialize_seq(ListVisitor { head, next }),
+                    Field::Key(head) => deserializer.deserialize_map(MapVisitor { head, next }),
                 }
             }
         }
     }
 }
 
-struct PathVisitor<'a, T> {
-    head: Field<'a>,
+struct ListVisitor<'a, T> {
+    head: usize,
     next: Path<'a, T>,
 }
 
-impl<'de, S> de::Visitor<'de> for PathVisitor<'_, S>
+impl<'de, S> de::Visitor<'de> for ListVisitor<'_, S>
 where
     S: de::DeserializeSeed<'de>,
 {
     type Value = S::Value;
     fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self.head {
-            Field::Index(i) => write!(f, "a sequence containing element {i:?}"),
-            Field::Key(k) => write!(f, "a map containing element {k:?}"),
-        }
+        write!(f, "a sequence containing element {:?}", self.head)
     }
 
     #[inline]
     fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-        let Field::Index(head) = self.head else {
-            return Err(de::Error::invalid_type(de::Unexpected::Seq, &self));
-        };
-
+        let Self { head, next } = self;
         let mut i = 0;
-        let value = loop {
+        let v = loop {
             if i == head {
-                break seq.next_element_seed(self.next)?;
+                break seq.next_element_seed(next)?;
             }
 
             if seq.next_element::<de::IgnoredAny>()?.is_none() {
@@ -79,34 +72,45 @@ where
             i += 1;
         };
 
-        let value =
-            value.ok_or_else(|| de::Error::custom(format_args!("missing field `{head:?}`")))?;
+        let v = v.ok_or_else(|| de::Error::custom(format_args!("missing field `{head:?}`")))?;
 
         while seq.next_element::<de::IgnoredAny>()?.is_some() {}
-        Ok(value)
+        Ok(v)
+    }
+}
+
+struct MapVisitor<'a, T> {
+    head: &'a str,
+    next: Path<'a, T>,
+}
+
+impl<'de, S> de::Visitor<'de> for MapVisitor<'_, S>
+where
+    S: de::DeserializeSeed<'de>,
+{
+    type Value = S::Value;
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "a map containing element {:?}", self.head)
     }
 
     #[inline]
     fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        let Field::Key(head) = self.head else {
-            return Err(de::Error::invalid_type(de::Unexpected::Map, &self));
-        };
+        let Self { head, next } = self;
         let visitor = FieldVisitor(head);
 
-        let value = loop {
+        let v = loop {
             let Some(found) = map.next_key_seed(visitor)? else {
                 break None;
             };
 
             if found {
-                break Some(map.next_value_seed(self.next)?);
+                break Some(map.next_value_seed(next)?);
             }
 
             map.next_value::<de::IgnoredAny>()?;
         };
 
-        let value =
-            value.ok_or_else(|| de::Error::custom(format_args!("missing field `{head:?}`")))?;
+        let v = v.ok_or_else(|| de::Error::custom(format_args!("missing field `{head}`")))?;
 
         while let Some((found, _)) = map.next_entry_seed(visitor, PhantomData::<de::IgnoredAny>)? {
             if found {
@@ -114,7 +118,7 @@ where
             }
         }
 
-        Ok(value)
+        Ok(v)
     }
 }
 
