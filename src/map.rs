@@ -4,10 +4,11 @@ use serde::de;
 
 use crate::FilterChain;
 
-impl FilterChain for str {
-    fn filter<'de, S, D>(&self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
+impl<'de, S: de::DeserializeSeed<'de>> FilterChain<'de, S> for &str {
+    type Value = S::Value;
+
+    fn filter<D>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
     where
-        S: de::DeserializeSeed<'de>,
         D: de::Deserializer<'de>,
     {
         deserializer.deserialize_map(MapVisitor {

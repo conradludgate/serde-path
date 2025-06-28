@@ -2,14 +2,15 @@ use serde::de;
 
 use crate::FilterChain;
 
-impl FilterChain for usize {
-    fn filter<'de, S, D>(&self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
+impl<'de, S: de::DeserializeSeed<'de>> FilterChain<'de, S> for usize {
+    type Value = S::Value;
+
+    fn filter<D>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
     where
-        S: de::DeserializeSeed<'de>,
         D: de::Deserializer<'de>,
     {
         deserializer.deserialize_seq(ListVisitor {
-            head: *self,
+            head: self,
             next: seed,
         })
     }
