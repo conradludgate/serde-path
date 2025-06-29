@@ -216,11 +216,12 @@ impl<'de> de::MapAccess<'de> for JsonMap<'de> {
 mod tests {
     use std::marker::PhantomData;
 
-    use serde_json::{Value, json};
+    use serde_json::{Serializer, Value, json};
 
     use crate::{
         FilterChain,
         json::{JsonField, JsonPath},
+        json_ser::JsonSer,
     };
 
     fn extract_json_path<'de, F, T>(
@@ -267,5 +268,42 @@ mod tests {
 
         let fields: Value = extract_json_path(&json, path).unwrap();
         assert_eq!(fields, json!([3, 5]));
+    }
+
+    #[test]
+    fn list_streaming() {
+        let json = json!({
+            "a": 1,
+            "b": {
+                "c": [2, 3, 4],
+                "d": [5]
+            },
+            "e": 6,
+        })
+        .to_string();
+
+        // let path = json_path!(@["b"][@["c"][1], @["d"][0]]);
+        let path = JsonPath(
+            vec![
+                JsonField::Index("b".into()),
+                JsonField::List(crate::MultiVec(vec![
+                    JsonPath(
+                        vec![JsonField::Index("c".into()), JsonField::Index(1.into())].into_iter(),
+                    ),
+                    JsonPath(
+                        vec![JsonField::Index("d".into()), JsonField::Index(0.into())].into_iter(),
+                    ),
+                ])),
+            ]
+            .into_iter(),
+        );
+
+        let ser = Serializer::pretty(Vec::new());
+        let output = path
+            .filter(JsonSer(ser), &mut serde_json::Deserializer::from_str(&json))
+            .unwrap();
+        let output = String::from_utf8(output).unwrap();
+
+        assert_eq!(output, "[\n  3,\n  5\n]");
     }
 }

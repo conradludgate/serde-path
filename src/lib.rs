@@ -1,4 +1,5 @@
 pub mod json;
+pub mod json_ser;
 mod list;
 mod map;
 mod multi;
