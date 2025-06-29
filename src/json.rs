@@ -78,15 +78,11 @@ impl JsonPath {
     }
 }
 
-impl<'de, S> FilterChain<'de, S> for JsonPath
-where
-    S: de::DeserializeSeed<'de>,
-{
-    type Value = S::Value;
-
-    fn filter<D>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
+impl<'de> FilterChain<'de> for JsonPath {
+    fn filter<D, S>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
     where
         D: de::Deserializer<'de>,
+        S: de::DeserializeSeed<'de>,
     {
         let raw = <&'de RawValue as de::Deserialize>::deserialize(deserializer)?;
         self.filter_inner(seed, raw).map_err(de::Error::custom)
@@ -224,13 +220,10 @@ mod tests {
         json_ser::JsonSer,
     };
 
-    fn extract_json_path<'de, F, T>(
-        json: &'de str,
-        filter: F,
-    ) -> Result<F::Value, serde_json::Error>
+    fn extract_json_path<'de, F, T>(json: &'de str, filter: F) -> Result<T, serde_json::Error>
     where
         T: serde::Deserialize<'de>,
-        F: FilterChain<'de, PhantomData<T>>,
+        F: FilterChain<'de>,
     {
         filter.filter(
             PhantomData::<T>,

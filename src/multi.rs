@@ -1,6 +1,9 @@
-use std::collections::HashMap;
+use std::vec::IntoIter;
 
-use serde::de;
+use serde::de::{
+    self,
+    value::{MapAccessDeserializer, SeqAccessDeserializer, StrDeserializer},
+};
 use serde_json::value::RawValue;
 
 use crate::FilterChain;
@@ -8,54 +11,97 @@ use crate::FilterChain;
 #[derive(Debug, Clone)]
 pub struct MultiVec<F>(pub Vec<F>);
 
-impl<'de, S, F> FilterChain<'de, S> for MultiVec<F>
+impl<'de, F> FilterChain<'de> for MultiVec<F>
 where
-    F: FilterChain<'de, S>,
-    S: de::DeserializeSeed<'de> + Clone,
+    F: FilterChain<'de>,
 {
-    type Value = Vec<F::Value>;
-
-    fn filter<D>(self, seed: S, deserializer: D) -> Result<Vec<F::Value>, D::Error>
+    fn filter<D, S>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
     where
         D: de::Deserializer<'de>,
+        S: de::DeserializeSeed<'de>,
     {
         let raw = <&'de RawValue as de::Deserialize>::deserialize(deserializer)?;
+        seed.deserialize(SeqAccessDeserializer::new(MultiSeqAccess {
+            raw,
+            filters: self.0.into_iter(),
+        }))
+        .map_err(de::Error::custom)
+    }
+}
 
-        let mut list = Vec::with_capacity(self.0.len());
-        for filter in self.0 {
-            let value = filter
-                .filter(seed.clone(), raw)
-                .map_err(de::Error::custom)?;
-            list.push(value);
-        }
-        Ok(list)
+struct MultiSeqAccess<'de, F> {
+    raw: &'de RawValue,
+    filters: IntoIter<F>,
+}
+
+impl<'de, F> de::SeqAccess<'de> for MultiSeqAccess<'de, F>
+where
+    F: FilterChain<'de>,
+{
+    type Error = serde_json::Error;
+
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
+    where
+        T: de::DeserializeSeed<'de>,
+    {
+        let Some(filter) = self.filters.next() else {
+            return Ok(None);
+        };
+
+        filter.filter(seed, self.raw).map(Some)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct MultiMap<F>(pub Vec<(String, F)>);
 
-impl<'de, S, F> FilterChain<'de, S> for MultiMap<F>
+impl<'de, F> FilterChain<'de> for MultiMap<F>
 where
-    F: FilterChain<'de, S>,
-    S: de::DeserializeSeed<'de> + Clone,
+    F: FilterChain<'de>,
 {
-    type Value = HashMap<String, F::Value>;
-
-    fn filter<D>(self, seed: S, deserializer: D) -> Result<HashMap<String, F::Value>, D::Error>
+    fn filter<D, S>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
     where
         D: de::Deserializer<'de>,
+        S: de::DeserializeSeed<'de>,
     {
         let raw = <&'de RawValue as de::Deserialize>::deserialize(deserializer)?;
+        seed.deserialize(MapAccessDeserializer::new(MultiMapAccess {
+            raw,
+            filter: None,
+            filters: self.0.into_iter(),
+        }))
+        .map_err(de::Error::custom)
+    }
+}
 
-        let mut map = HashMap::with_capacity(self.0.len());
-        for (key, filter) in self.0 {
-            let value = filter
-                .filter(seed.clone(), raw)
-                .map_err(de::Error::custom)?;
-            map.insert(key, value);
-        }
-        Ok(map)
+struct MultiMapAccess<'de, F> {
+    raw: &'de RawValue,
+    filter: Option<F>,
+    filters: IntoIter<(String, F)>,
+}
+
+impl<'de, F> de::MapAccess<'de> for MultiMapAccess<'de, F>
+where
+    F: FilterChain<'de>,
+{
+    type Error = serde_json::Error;
+
+    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
+    where
+        K: de::DeserializeSeed<'de>,
+    {
+        let Some((key, filter)) = self.filters.next() else {
+            return Ok(None);
+        };
+        self.filter = Some(filter);
+        seed.deserialize(StrDeserializer::new(&key)).map(Some)
+    }
+
+    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
+    where
+        V: de::DeserializeSeed<'de>,
+    {
+        self.filter.take().unwrap().filter(seed, self.raw)
     }
 }
 
@@ -67,13 +113,10 @@ mod tests {
 
     use crate::{FilterChain, MultiVec, hlist, multi::MultiMap};
 
-    fn extract_json_path<'de, F, T>(
-        json: &'de str,
-        filter: F,
-    ) -> Result<F::Value, serde_json::Error>
+    fn extract_json_path<'de, F, T>(json: &'de str, filter: F) -> Result<T, serde_json::Error>
     where
         T: serde::Deserialize<'de>,
-        F: FilterChain<'de, PhantomData<T>>,
+        F: FilterChain<'de>,
     {
         filter.filter(
             PhantomData::<T>,

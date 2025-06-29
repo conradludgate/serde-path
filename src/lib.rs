@@ -2,46 +2,59 @@ pub mod json;
 pub mod json_ser;
 mod list;
 mod map;
+pub mod map_select;
 mod multi;
+pub mod predicate;
 
 pub use multi::{MultiMap, MultiVec};
 
 use serde::de;
 
-pub trait FilterChain<'de, S: de::DeserializeSeed<'de>> {
-    type Value;
-
-    fn filter<D>(self, seed: S, deserializer: D) -> Result<Self::Value, D::Error>
+pub trait FilterChain<'de> {
+    fn filter<D, S>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
     where
-        D: de::Deserializer<'de>;
+        D: de::Deserializer<'de>,
+        S: de::DeserializeSeed<'de>;
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Final;
+pub struct Const<T>(pub T);
 
-impl<'de, S> FilterChain<'de, S> for Final
+impl<'de, T> FilterChain<'de> for Const<T>
 where
-    S: de::DeserializeSeed<'de>,
+    T: de::Deserializer<'de>,
 {
-    type Value = S::Value;
-    fn filter<D>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
+    fn filter<D, S>(self, seed: S, _d: D) -> Result<S::Value, D::Error>
     where
         D: de::Deserializer<'de>,
+        S: de::DeserializeSeed<'de>,
+    {
+        seed.deserialize(self.0).map_err(de::Error::custom)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Final;
+
+impl<'de> FilterChain<'de> for Final {
+    fn filter<D, S>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
+    where
+        D: de::Deserializer<'de>,
+        S: de::DeserializeSeed<'de>,
     {
         seed.deserialize(deserializer)
     }
 }
 
-impl<'de, S, F1, F2> FilterChain<'de, S> for (F1, F2)
+impl<'de, F1, F2> FilterChain<'de> for (F1, F2)
 where
-    S: de::DeserializeSeed<'de>,
-    F1: FilterChain<'de, Chain<F2, S>>,
-    F2: FilterChain<'de, S>,
+    F1: FilterChain<'de>,
+    F2: FilterChain<'de>,
 {
-    type Value = F1::Value;
-    fn filter<D>(self, seed: S, deserializer: D) -> Result<F1::Value, D::Error>
+    fn filter<D, S>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
     where
         D: de::Deserializer<'de>,
+        S: de::DeserializeSeed<'de>,
     {
         let (head, filter) = self;
         head.filter(Chain { filter, seed }, deserializer)
@@ -51,16 +64,14 @@ where
 #[derive(Debug, Clone)]
 pub struct Iter<I>(pub I);
 
-impl<'de, S, I> FilterChain<'de, S> for Iter<I>
+impl<'de, I> FilterChain<'de> for Iter<I>
 where
-    S: de::DeserializeSeed<'de>,
-    I: Iterator<Item: FilterChain<'de, Chain<Self, S>, Value = S::Value>>,
+    I: Iterator<Item: FilterChain<'de>>,
 {
-    type Value = S::Value;
-
-    fn filter<D>(mut self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
+    fn filter<D, S>(mut self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
     where
         D: de::Deserializer<'de>,
+        S: de::DeserializeSeed<'de>,
     {
         match self.0.next() {
             None => Final.filter(seed, deserializer),
@@ -71,23 +82,23 @@ where
 
 #[derive(Clone, Copy, Debug)]
 pub struct Chain<F, S> {
-    filter: F,
-    seed: S,
+    pub filter: F,
+    pub seed: S,
 }
 
 impl<'de, F, S> de::DeserializeSeed<'de> for Chain<F, S>
 where
-    F: FilterChain<'de, S>,
+    F: FilterChain<'de>,
     S: de::DeserializeSeed<'de>,
 {
-    type Value = F::Value;
+    type Value = S::Value;
 
-    fn deserialize<D>(self, deserializer: D) -> Result<F::Value, D::Error>
+    fn deserialize<D>(self, deserializer: D) -> Result<S::Value, D::Error>
     where
         D: de::Deserializer<'de>,
     {
-        let Self { filter: path, seed } = self;
-        path.filter(seed, deserializer)
+        let Self { filter, seed } = self;
+        filter.filter(seed, deserializer)
     }
 }
 
@@ -107,13 +118,10 @@ mod tests {
 
     use crate::FilterChain;
 
-    fn extract_json_path<'de, F, T>(
-        json: &'de str,
-        filter: F,
-    ) -> Result<F::Value, serde_json::Error>
+    fn extract_json_path<'de, F, T>(json: &'de str, filter: F) -> Result<T, serde_json::Error>
     where
         T: serde::Deserialize<'de>,
-        F: FilterChain<'de, PhantomData<T>>,
+        F: FilterChain<'de>,
     {
         filter.filter(
             PhantomData::<T>,
