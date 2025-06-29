@@ -1,3 +1,4 @@
+pub mod json;
 mod list;
 mod map;
 mod multi;
@@ -43,28 +44,6 @@ where
     {
         let (head, filter) = self;
         head.filter(Chain { filter, seed }, deserializer)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum Field<'a> {
-    Index(usize),
-    Key(&'a str),
-}
-
-impl<'de, S> FilterChain<'de, S> for Field<'_>
-where
-    S: de::DeserializeSeed<'de>,
-{
-    type Value = S::Value;
-    fn filter<D>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
-    where
-        D: de::Deserializer<'de>,
-    {
-        match self {
-            Field::Index(head) => head.filter(seed, deserializer),
-            Field::Key(head) => head.filter(seed, deserializer),
-        }
     }
 }
 

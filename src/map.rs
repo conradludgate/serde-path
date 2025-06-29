@@ -4,6 +4,20 @@ use serde::de;
 
 use crate::FilterChain;
 
+impl<'de, S: de::DeserializeSeed<'de>> FilterChain<'de, S> for String {
+    type Value = S::Value;
+
+    fn filter<D>(self, seed: S, deserializer: D) -> Result<S::Value, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(MapVisitor {
+            head: &self,
+            next: seed,
+        })
+    }
+}
+
 impl<'de, S: de::DeserializeSeed<'de>> FilterChain<'de, S> for &str {
     type Value = S::Value;
 

@@ -5,6 +5,7 @@ use serde_json::value::RawValue;
 
 use crate::FilterChain;
 
+#[derive(Debug, Clone)]
 pub struct MultiVec<F>(pub Vec<F>);
 
 impl<'de, S, F> FilterChain<'de, S> for MultiVec<F>
@@ -31,6 +32,7 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct MultiMap<F>(pub Vec<(String, F)>);
 
 impl<'de, S, F> FilterChain<'de, S> for MultiMap<F>
@@ -93,7 +95,7 @@ mod tests {
 
         let fields: Vec<&RawValue> = extract_json_path(
             &json,
-            hlist!["b", MultiVec(vec![hlist!["c", 1], hlist!["d", 0]])],
+            hlist!["b", MultiVec(vec![hlist!["c", 1_usize], hlist!["d", 0]])],
         )
         .unwrap();
 
@@ -119,7 +121,7 @@ mod tests {
             hlist![
                 "b",
                 MultiMap(vec![
-                    ("one".to_string(), hlist!["c", 1]),
+                    ("one".to_string(), hlist!["c", 1_usize]),
                     ("two".to_string(), hlist!["d", 0])
                 ])
             ],
