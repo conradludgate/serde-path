@@ -47,6 +47,7 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Iter<I>(pub I);
 
 impl<'de, S, I> FilterChain<'de, S> for Iter<I>
