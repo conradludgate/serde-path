@@ -1,10 +1,13 @@
+mod borrow;
 pub mod json;
 pub mod json_ser;
 mod list;
-mod map;
-pub mod map_select;
+pub mod map;
 mod multi;
+mod obj;
 pub mod predicate;
+pub mod raw;
+pub mod select;
 
 pub use multi::{MultiMap, MultiVec};
 
@@ -99,6 +102,18 @@ where
     {
         let Self { filter, seed } = self;
         filter.filter(seed, deserializer)
+    }
+}
+
+struct TakeWrapper<S>(Option<S>);
+impl<'de, S: de::DeserializeSeed<'de>> de::DeserializeSeed<'de> for &mut TakeWrapper<S> {
+    type Value = S::Value;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        self.0.take().unwrap().deserialize(deserializer)
     }
 }
 

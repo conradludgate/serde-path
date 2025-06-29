@@ -5,6 +5,8 @@ use serde::de::{DeserializeSeed, Deserializer, Error as DeError, MapAccess, SeqA
 use serde::ser::{Error as SerError, Serialize, SerializeMap, SerializeSeq, Serializer};
 use serde_json::ser::Formatter;
 
+use crate::TakeWrapper;
+
 pub struct JsonSer<W, F>(pub serde_json::Serializer<W, F>);
 
 impl<'de, W, F> DeserializeSeed<'de> for JsonSer<W, F>
@@ -134,18 +136,6 @@ impl<'de, S: Serializer> Visitor<'de> for SerWrapper<S> {
 
     fn visit_unit<E: DeError>(self) -> Result<S::Ok, E> {
         self.0.serialize_unit().map_err(DeError::custom)
-    }
-}
-
-struct TakeWrapper<S>(Option<S>);
-impl<'de, S: DeserializeSeed<'de>> DeserializeSeed<'de> for &mut TakeWrapper<S> {
-    type Value = S::Value;
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        self.0.take().unwrap().deserialize(deserializer)
     }
 }
 
