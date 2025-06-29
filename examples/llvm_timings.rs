@@ -1,4 +1,4 @@
-use std::io::{Read, stdin, stdout};
+use std::io::{BufReader, stdin, stdout};
 
 use serde_json::Serializer;
 use serde_path::{
@@ -15,7 +15,7 @@ fn main() {
         Map(Select(NotEq::new("ph", "X".to_string())))
     ];
 
-    let mut de = serde_json::Deserializer::from_reader(stdin());
+    let mut de = serde_json::Deserializer::from_reader(BufReader::new(stdin()));
     path.filter(JsonSer(Serializer::pretty(stdout())), &mut de)
         .unwrap();
     de.end().unwrap();
